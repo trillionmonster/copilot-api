@@ -24,6 +24,17 @@ export async function forwardError(c: Context, error: unknown) {
       errorJson = errorText
     }
     consola.error("HTTP error:", errorJson)
+
+    // If the upstream response already has a top-level `error` field, forward it
+    // directly to avoid double-wrapping the JSON string inside message.
+    if (
+      errorJson !== null &&
+      typeof errorJson === "object" &&
+      "error" in errorJson
+    ) {
+      return c.json(errorJson, error.response.status as ContentfulStatusCode)
+    }
+
     return c.json(
       {
         error: {

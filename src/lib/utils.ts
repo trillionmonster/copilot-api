@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import consola from "consola"
 
 import { getModels } from "~/services/copilot/get-models"
@@ -12,6 +14,14 @@ export const sleep = (ms: number) =>
 
 export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
+
+export function sanitizeUserIdentifier(user?: string | null): string | undefined {
+  if (!user) return undefined
+  if (user.length <= 64) return user
+
+  const hash = createHash("sha256").update(user).digest("hex").slice(0, 12)
+  return `${user.slice(0, 51)}-${hash}`
+}
 
 export async function cacheModels(): Promise<void> {
   const models = await getModels()

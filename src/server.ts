@@ -6,6 +6,8 @@ import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
+import { playgroundRoute } from "./routes/playground/route"
+import { responsesRoutes } from "./routes/responses/route"
 import { tokenRoute } from "./routes/token/route"
 import { usageRoute } from "./routes/usage/route"
 
@@ -27,5 +29,11 @@ server.route("/v1/chat/completions", completionRoutes)
 server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
 
+// OpenAI Responses API (used by Codex, etc.)
+server.route("/v1/responses", responsesRoutes)
+
 // Anthropic compatible endpoints
 server.route("/v1/messages", messageRoutes)
+
+// Playground UI
+server.route("/playground", playgroundRoute)

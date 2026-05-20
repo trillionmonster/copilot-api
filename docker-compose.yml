@@ -1,0 +1,40 @@
+services:
+  copilot-api:
+    build: .
+    container_name: copilot-api
+    restart: always
+    ports:
+      - "4141:4141"
+    volumes:
+      - ./copilot-data:/root/.local/share/copilot-api
+    environment:
+      - GH_TOKEN=${GH_TOKEN:-}
+      - HTTP_PROXY=http://10.0.0.3:7890
+      - HTTPS_PROXY=http://10.0.0.3:7890
+      - NO_PROXY=localhost,127.0.0.1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4141/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  copilot-api-2:
+    build: .
+    container_name: copilot-api-2
+    restart: always
+    ports:
+      - "4142:4141"
+    volumes:
+      - ./copilot-data-2:/root/.local/share/copilot-api
+    environment:
+      - GH_TOKEN=${GH_TOKEN_2:-}
+      - HTTP_PROXY=http://10.0.0.3:7890
+      - HTTPS_PROXY=http://10.0.0.3:7890
+      - NO_PROXY=localhost,127.0.0.1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4141/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

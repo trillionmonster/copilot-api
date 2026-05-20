@@ -12,3 +12,7 @@ node_modules/
 
 # build output
 dist/
+
+# copilot token data
+copilot-data/
+copilot-data-2/
