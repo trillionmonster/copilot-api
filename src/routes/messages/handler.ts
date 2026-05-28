@@ -1,4 +1,5 @@
 import type { Context } from "hono"
+import type { SSEStreamingApi } from "hono/streaming"
 
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
@@ -33,6 +34,26 @@ import {
   translateToOpenAI,
 } from "./non-stream-translation"
 import { translateChunkToAnthropicEvents } from "./stream-translation"
+
+// Interval (ms) between SSE keep-alive comments. Intermediate HTTP proxies
+// (e.g. tailnet/nginx with low `keepalive_timeout`) close idle sockets after
+// just a few seconds, causing Claude Code to report
+// `socket connection was closed unexpectedly` whenever the upstream model
+// pauses (thinking, tool prep, slow first token). A periodic SSE comment
+// (`: ping\n\n`) is ignored by clients but keeps the TCP connection active.
+const SSE_HEARTBEAT_INTERVAL_MS = 2000
+
+function startHeartbeat(stream: SSEStreamingApi): () => void {
+  const timer = setInterval(() => {
+    // SSE comment line — ignored by all SSE clients, including Anthropic SDK.
+    stream.write(": ping\n\n").catch(() => {
+      // Stream already closed; the finally block will clear the interval.
+    })
+  }, SSE_HEARTBEAT_INTERVAL_MS)
+  // Don't keep the event loop alive just for the heartbeat.
+  if (typeof timer.unref === "function") timer.unref()
+  return () => clearInterval(timer)
+}
 
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
@@ -87,33 +108,38 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response from Copilot")
   return streamSSE(c, async (stream) => {
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      toolCalls: {},
-    }
-
-    for await (const rawEvent of response) {
-      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
-      if (rawEvent.data === "[DONE]") {
-        break
+    const stopHeartbeat = startHeartbeat(stream)
+    try {
+      const streamState: AnthropicStreamState = {
+        messageStartSent: false,
+        contentBlockIndex: 0,
+        contentBlockOpen: false,
+        toolCalls: {},
       }
 
-      if (!rawEvent.data) {
-        continue
-      }
+      for await (const rawEvent of response) {
+        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+        if (rawEvent.data === "[DONE]") {
+          break
+        }
 
-      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      const events = translateChunkToAnthropicEvents(chunk, streamState)
+        if (!rawEvent.data) {
+          continue
+        }
 
-      for (const event of events) {
-        consola.debug("Translated Anthropic event:", JSON.stringify(event))
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
-        })
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        const events = translateChunkToAnthropicEvents(chunk, streamState)
+
+        for (const event of events) {
+          consola.debug("Translated Anthropic event:", JSON.stringify(event))
+          await stream.writeSSE({
+            event: event.type,
+            data: JSON.stringify(event),
+          })
+        }
       }
+    } finally {
+      stopHeartbeat()
     }
   })
 }
@@ -147,31 +173,36 @@ async function handleViaResponses(
 
   consola.debug("Streaming response from /responses (via Anthropic)")
   return streamSSE(c, async (stream) => {
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      toolCalls: {},
-    }
-
-    // Convert responses stream → chat completion chunks → anthropic events
-    for await (const sseChunk of translateResponseStreamToCompletionStream(
-      response,
-    )) {
-      if (sseChunk.data === "[DONE]") {
-        break
+    const stopHeartbeat = startHeartbeat(stream)
+    try {
+      const streamState: AnthropicStreamState = {
+        messageStartSent: false,
+        contentBlockIndex: 0,
+        contentBlockOpen: false,
+        toolCalls: {},
       }
 
-      const chunk = JSON.parse(sseChunk.data) as ChatCompletionChunk
-      const events = translateChunkToAnthropicEvents(chunk, streamState)
+      // Convert responses stream → chat completion chunks → anthropic events
+      for await (const sseChunk of translateResponseStreamToCompletionStream(
+        response,
+      )) {
+        if (sseChunk.data === "[DONE]") {
+          break
+        }
 
-      for (const event of events) {
-        consola.debug("Translated Anthropic event:", JSON.stringify(event))
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
-        })
+        const chunk = JSON.parse(sseChunk.data) as ChatCompletionChunk
+        const events = translateChunkToAnthropicEvents(chunk, streamState)
+
+        for (const event of events) {
+          consola.debug("Translated Anthropic event:", JSON.stringify(event))
+          await stream.writeSSE({
+            event: event.type,
+            data: JSON.stringify(event),
+          })
+        }
       }
+    } finally {
+      stopHeartbeat()
     }
   })
 }
